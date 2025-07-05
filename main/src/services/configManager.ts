@@ -1,5 +1,5 @@
 import { EventEmitter } from 'events';
-import type { AppConfig } from '../types/config';
+import type { AppConfig, ClaudeConfig, OllamaConfig } from '../types/config';
 import fs from 'fs/promises';
 import path from 'path';
 import os from 'os';
@@ -20,6 +20,10 @@ export class ConfigManager extends EventEmitter {
       anthropicApiKey: undefined,
       systemPromptAppend: undefined,
       runScript: undefined,
+      claudeConfig: { executablePath: undefined },
+      ollamaConfig: { apiUrl: 'http://localhost:11434', defaultModel: undefined },
+      defaultProvider: 'claude',
+      agents: {},
       defaultPermissionMode: 'ignore',
       stravuApiKey: undefined,
       stravuServerUrl: 'https://api.stravu.com'
@@ -32,9 +36,16 @@ export class ConfigManager extends EventEmitter {
     
     try {
       const data = await fs.readFile(this.configPath, 'utf-8');
-      this.config = JSON.parse(data);
+      const loadedConfig = JSON.parse(data);
+      // Merge loaded config with defaults to ensure new fields are present
+      this.config = { ...this.config, ...loadedConfig };
+      // Ensure nested config objects are also merged or initialized
+      this.config.claudeConfig = { ...this.config.claudeConfig, ...loadedConfig.claudeConfig };
+      this.config.ollamaConfig = { ...this.config.ollamaConfig, ...loadedConfig.ollamaConfig };
+      this.config.agents = { ...this.config.agents, ...loadedConfig.agents };
+
     } catch (error) {
-      // Config file doesn't exist, use defaults
+      // Config file doesn't exist or is invalid, use defaults and save
       await this.saveConfig();
     }
   }
@@ -52,7 +63,27 @@ export class ConfigManager extends EventEmitter {
   async updateConfig(updates: Partial<AppConfig>): Promise<AppConfig> {
     // Filter out theme updates - always dark mode
     const { theme, ...filteredUpdates } = updates;
-    this.config = { ...this.config, ...filteredUpdates };
+
+    // Deep merge for nested config objects
+    const newConfig = { ...this.config };
+    if (filteredUpdates.claudeConfig) {
+      newConfig.claudeConfig = { ...newConfig.claudeConfig, ...filteredUpdates.claudeConfig };
+    }
+    if (filteredUpdates.ollamaConfig) {
+      newConfig.ollamaConfig = { ...newConfig.ollamaConfig, ...filteredUpdates.ollamaConfig };
+    }
+    if (filteredUpdates.agents) {
+      newConfig.agents = { ...newConfig.agents, ...filteredUpdates.agents };
+    }
+
+    // Apply other updates
+    for (const key in filteredUpdates) {
+      if (key !== 'claudeConfig' && key !== 'ollamaConfig' && key !== 'agents') {
+        (newConfig as any)[key] = (filteredUpdates as any)[key];
+      }
+    }
+
+    this.config = newConfig;
     await this.saveConfig();
     this.emit('config-updated', this.config);
     return this.getConfig();
