@@ -1,6 +1,7 @@
 import { AgentHostManager } from '../../services/agentHostManager';
 import { ClaudeCodeManager } from '../../services/claudeCodeManager';
 import { OllamaManager } from '../../services/ollamaManager';
+import { GeminiManager } from '../../services/geminiManager';
 import { ConfigManager } from '../../services/configManager';
 import { Logger } from '../../utils/logger';
 import { SessionManager } from '../../services/sessionManager'; // Assuming this is the correct path
@@ -10,6 +11,7 @@ from 'events';
 // Mocks
 jest.mock('../../services/claudeCodeManager');
 jest.mock('../../services/ollamaManager');
+jest.mock('../../services/geminiManager');
 jest.mock('../../services/configManager');
 jest.mock('../../utils/logger');
 jest.mock('../../services/sessionManager');
@@ -22,6 +24,7 @@ describe('AgentHostManager', () => {
   let mockLogger: jest.Mocked<Logger>;
   let mockClaudeManager: jest.Mocked<ClaudeCodeManager>;
   let mockOllamaManager: jest.Mocked<OllamaManager>;
+  let mockGeminiManager: jest.Mocked<GeminiManager>;
 
   beforeEach(() => {
     // Reset all mocks
@@ -36,14 +39,17 @@ describe('AgentHostManager', () => {
     // And ensure they are event emitters
     mockClaudeManager = new ClaudeCodeManager(mockSessionManager, mockLogger, mockConfigManager, null) as jest.Mocked<ClaudeCodeManager>;
     mockOllamaManager = new OllamaManager(mockConfigManager, mockLogger) as jest.Mocked<OllamaManager>;
+    mockGeminiManager = new GeminiManager(mockConfigManager, mockLogger) as jest.Mocked<GeminiManager>;
 
     // Ensure mocked managers have EventEmitter properties
     Object.assign(mockClaudeManager, EventEmitter.prototype);
     Object.assign(mockOllamaManager, EventEmitter.prototype);
+    Object.assign(mockGeminiManager, EventEmitter.prototype);
 
 
     (ClaudeCodeManager as jest.MockClass<ClaudeCodeManager>).mockImplementation(() => mockClaudeManager);
     (OllamaManager as jest.MockClass<OllamaManager>).mockImplementation(() => mockOllamaManager);
+    (GeminiManager as jest.MockClass<GeminiManager>).mockImplementation(() => mockGeminiManager);
 
 
     // Default config
@@ -62,6 +68,7 @@ describe('AgentHostManager', () => {
       await agentHostManager.startSession('s1', '/path', 'prompt');
       expect(mockClaudeManager.startSession).toHaveBeenCalled();
       expect(mockOllamaManager.generateResponse).not.toHaveBeenCalled();
+      expect(mockGeminiManager.generateResponse).not.toHaveBeenCalled();
     });
 
     it('should select Ollama if defaultProvider is ollama', async () => {
@@ -70,17 +77,36 @@ describe('AgentHostManager', () => {
       await agentHostManager.startSession('s1', '/path', 'prompt');
       expect(mockOllamaManager.generateResponse).toHaveBeenCalled();
       expect(mockClaudeManager.startSession).not.toHaveBeenCalled();
+      expect(mockGeminiManager.generateResponse).not.toHaveBeenCalled();
+    });
+
+    it('should select Gemini if defaultProvider is gemini', async () => {
+      mockConfigManager.getConfig.mockReturnValue({ defaultProvider: 'gemini', geminiConfig: { defaultModel: 'test-gemini' } });
+      agentHostManager = new AgentHostManager(mockConfigManager, mockSessionManager, mockLogger, null); // Re-initialize with new config
+      await agentHostManager.startSession('s1', '/path', 'prompt');
+      expect(mockGeminiManager.generateResponse).toHaveBeenCalled();
+      expect(mockClaudeManager.startSession).not.toHaveBeenCalled();
+      expect(mockOllamaManager.generateResponse).not.toHaveBeenCalled();
     });
 
     it('should select provider based on agentId if configured', async () => {
       mockConfigManager.getConfig.mockReturnValue({
         defaultProvider: 'claude',
         ollamaConfig: { defaultModel: 'test-ollama' },
-        agents: { 'agent-ollama': { provider: 'ollama', model: 'agent-model' } },
+        geminiConfig: { defaultModel: 'test-gemini' },
+        agents: {
+          'agent-ollama': { provider: 'ollama', model: 'agent-model' },
+          'agent-gemini': { provider: 'gemini', model: 'gemini-agent-model'}
+        },
       });
       agentHostManager = new AgentHostManager(mockConfigManager, mockSessionManager, mockLogger, null);
+
       await agentHostManager.startSession('s1', '/path', 'prompt', 'agent-ollama');
       expect(mockOllamaManager.generateResponse).toHaveBeenCalledWith('s1', 'prompt', 'agent-ollama');
+
+      await agentHostManager.startSession('s2', '/path', 'prompt', 'agent-gemini');
+      expect(mockGeminiManager.generateResponse).toHaveBeenCalledWith('s2', 'prompt', 'agent-gemini');
+
       expect(mockClaudeManager.startSession).not.toHaveBeenCalled();
     });
 
@@ -94,6 +120,7 @@ describe('AgentHostManager', () => {
       await agentHostManager.startSession('s1', '/path', 'prompt', 'unknown-agent');
       expect(mockClaudeManager.startSession).toHaveBeenCalled();
       expect(mockOllamaManager.generateResponse).not.toHaveBeenCalled();
+      expect(mockGeminiManager.generateResponse).not.toHaveBeenCalled();
     });
   });
 
@@ -117,6 +144,14 @@ describe('AgentHostManager', () => {
       expect(mockOllamaManager.generateResponse).toHaveBeenCalledWith('s1', 'new prompt', 'agent1', []);
     });
 
+    it('should route continueSession to Gemini', async () => {
+      mockConfigManager.getConfig.mockReturnValue({ defaultProvider: 'gemini', geminiConfig: { defaultModel: 'test-gemini' } });
+      agentHostManager = new AgentHostManager(mockConfigManager, mockSessionManager, mockLogger, null);
+      (agentHostManager as any).sessionProviders.set('s1', mockGeminiManager);
+      await agentHostManager.continueSession('s1', '/path', 'new prompt', [], 'agent1');
+      expect(mockGeminiManager.generateResponse).toHaveBeenCalledWith('s1', 'new prompt', 'agent1', []);
+    });
+
     it('should determine provider for continueSession if not already tracked', async () => {
       mockConfigManager.getConfig.mockReturnValue({ defaultProvider: 'ollama', ollamaConfig: { defaultModel: 'test-ollama' } });
       agentHostManager = new AgentHostManager(mockConfigManager, mockSessionManager, mockLogger, null);
@@ -129,18 +164,23 @@ describe('AgentHostManager', () => {
     it('should route stopSession to the correct provider', async () => {
       (agentHostManager as any).sessionProviders.set('s1-claude', mockClaudeManager);
       (agentHostManager as any).sessionProviders.set('s1-ollama', mockOllamaManager);
+      (agentHostManager as any).sessionProviders.set('s1-gemini', mockGeminiManager);
 
       await agentHostManager.stopSession('s1-claude');
       expect(mockClaudeManager.stopSession).toHaveBeenCalledWith('s1-claude');
 
       await agentHostManager.stopSession('s1-ollama');
       expect(mockOllamaManager.stopSession).toHaveBeenCalledWith('s1-ollama');
+
+      await agentHostManager.stopSession('s1-gemini');
+      expect(mockGeminiManager.stopSession).toHaveBeenCalledWith('s1-gemini');
     });
 
-    it('should attempt to stop both providers if provider not found for stopSession', async () => {
+    it('should attempt to stop all providers if provider not found for stopSession', async () => {
       await agentHostManager.stopSession('s-unknown');
       expect(mockClaudeManager.stopSession).toHaveBeenCalledWith('s-unknown');
       expect(mockOllamaManager.stopSession).toHaveBeenCalledWith('s-unknown');
+      expect(mockGeminiManager.stopSession).toHaveBeenCalledWith('s-unknown'); // Check Gemini too
       expect(mockLogger.warn).toHaveBeenCalledWith(expect.stringContaining('stopSession called for s-unknown but no active provider found'));
     });
 
@@ -151,10 +191,14 @@ describe('AgentHostManager', () => {
       expect(mockClaudeManager.sendInput).toHaveBeenCalledWith('s1', 'hello');
     });
 
-    it('should warn if sendInput is called for Ollama', () => {
-      (agentHostManager as any).sessionProviders.set('s1', mockOllamaManager);
-      agentHostManager.sendInput('s1', 'hello');
-      expect(mockLogger.warn).toHaveBeenCalledWith(expect.stringContaining('sendInput called for Ollama session s1, which is not supported'));
+    it('should warn if sendInput is called for Ollama or Gemini', () => {
+      (agentHostManager as any).sessionProviders.set('s-ollama', mockOllamaManager);
+      agentHostManager.sendInput('s-ollama', 'hello');
+      expect(mockLogger.warn).toHaveBeenCalledWith(expect.stringContaining('sendInput called for API-based session s-ollama, which is not supported'));
+
+      (agentHostManager as any).sessionProviders.set('s-gemini', mockGeminiManager);
+      agentHostManager.sendInput('s-gemini', 'hello');
+      expect(mockLogger.warn).toHaveBeenCalledWith(expect.stringContaining('sendInput called for API-based session s-gemini, which is not supported'));
     });
   });
 

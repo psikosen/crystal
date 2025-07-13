@@ -18,10 +18,12 @@ export class ConfigManager extends EventEmitter {
       gitRepoPath: defaultGitPath || os.homedir(),
       verbose: false,
       anthropicApiKey: undefined,
+      geminiApiKey: undefined,
       systemPromptAppend: undefined,
       runScript: undefined,
       claudeConfig: { executablePath: undefined },
       ollamaConfig: { apiUrl: 'http://localhost:11434', defaultModel: undefined },
+      geminiConfig: { defaultModel: 'gemini-pro' },
       defaultProvider: 'claude',
       agents: {},
       defaultPermissionMode: 'ignore',
@@ -42,6 +44,7 @@ export class ConfigManager extends EventEmitter {
       // Ensure nested config objects are also merged or initialized
       this.config.claudeConfig = { ...this.config.claudeConfig, ...loadedConfig.claudeConfig };
       this.config.ollamaConfig = { ...this.config.ollamaConfig, ...loadedConfig.ollamaConfig };
+      this.config.geminiConfig = { ...this.config.geminiConfig, ...loadedConfig.geminiConfig };
       this.config.agents = { ...this.config.agents, ...loadedConfig.agents };
 
     } catch (error) {
@@ -72,13 +75,16 @@ export class ConfigManager extends EventEmitter {
     if (filteredUpdates.ollamaConfig) {
       newConfig.ollamaConfig = { ...newConfig.ollamaConfig, ...filteredUpdates.ollamaConfig };
     }
+    if (filteredUpdates.geminiConfig) {
+      newConfig.geminiConfig = { ...newConfig.geminiConfig, ...filteredUpdates.geminiConfig };
+    }
     if (filteredUpdates.agents) {
       newConfig.agents = { ...newConfig.agents, ...filteredUpdates.agents };
     }
 
     // Apply other updates
     for (const key in filteredUpdates) {
-      if (key !== 'claudeConfig' && key !== 'ollamaConfig' && key !== 'agents') {
+      if (key !== 'claudeConfig' && key !== 'ollamaConfig' && key !== 'geminiConfig' && key !== 'agents') {
         (newConfig as any)[key] = (filteredUpdates as any)[key];
       }
     }

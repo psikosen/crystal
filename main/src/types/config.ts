@@ -7,14 +7,19 @@ export interface OllamaConfig {
   defaultModel?: string;
 }
 
+export interface GeminiConfig {
+  defaultModel?: string;
+}
+
 export interface AgentConfig {
-  provider?: 'claude' | 'ollama';
+  provider?: 'claude' | 'ollama' | 'gemini';
   model?: string;
 }
 
 export interface AppConfig {
   verbose?: boolean;
   anthropicApiKey?: string;
+  geminiApiKey?: string;
   // Legacy fields for backward compatibility
   gitRepoPath?: string;
   systemPromptAppend?: string;
@@ -23,8 +28,10 @@ export interface AppConfig {
   claudeConfig?: ClaudeConfig;
   // Configuration for Ollama
   ollamaConfig?: OllamaConfig;
+  // Configuration for Gemini
+  geminiConfig?: GeminiConfig;
   // Default LLM provider
-  defaultProvider?: 'claude' | 'ollama';
+  defaultProvider?: 'claude' | 'ollama' | 'gemini';
   // Per-agent configuration
   agents?: Record<string, AgentConfig>;
   // Permission mode for all sessions
@@ -41,9 +48,11 @@ export interface AppConfig {
 export interface UpdateConfigRequest {
   verbose?: boolean;
   anthropicApiKey?: string;
+  geminiApiKey?: string;
   claudeConfig?: ClaudeConfig;
   ollamaConfig?: OllamaConfig;
-  defaultProvider?: 'claude' | 'ollama';
+  geminiConfig?: GeminiConfig;
+  defaultProvider?: 'claude' | 'ollama' | 'gemini';
   agents?: Record<string, AgentConfig>;
   systemPromptAppend?: string;
   defaultPermissionMode?: 'approve' | 'ignore';

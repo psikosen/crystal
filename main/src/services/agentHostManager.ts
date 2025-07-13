@@ -4,6 +4,7 @@ import type { Logger } from '../utils/logger';
 import type { SessionManager } from './sessionManager'; // Assuming SessionManager is the type for sessionManager
 import { ClaudeCodeManager } from './claudeCodeManager';
 import { OllamaManager } from './ollamaManager';
+import { GeminiManager } from './geminiManager'; // Import GeminiManager
 
 // Define a common interface for provider operations (simplified for now)
 interface LLMProvider {
@@ -23,6 +24,7 @@ export class AgentHostManager extends EventEmitter implements LLMProvider {
   private sessionManager: any; // Use actual type if available
   private claudeManager: ClaudeCodeManager;
   private ollamaManager: OllamaManager;
+  private geminiManager: GeminiManager; // Add geminiManager
   private permissionIpcPath?: string | null;
 
   // To keep track of which provider is used for which session
@@ -42,6 +44,7 @@ export class AgentHostManager extends EventEmitter implements LLMProvider {
 
     this.claudeManager = new ClaudeCodeManager(this.sessionManager, this.logger, this.configManager, this.permissionIpcPath);
     this.ollamaManager = new OllamaManager(this.configManager, this.logger);
+    this.geminiManager = new GeminiManager(this.configManager, this.logger); // Instantiate GeminiManager
 
     // Forward events from underlying managers
     this.claudeManager.on('output', (data) => this.emit('output', data));
@@ -60,6 +63,14 @@ export class AgentHostManager extends EventEmitter implements LLMProvider {
     this.ollamaManager.on('error', (data) => this.emit('error', data));
     this.ollamaManager.on('spawned', (data) => this.emit('spawned', data));
 
+    this.geminiManager.on('output', (data) => this.emit('output', data));
+    this.geminiManager.on('exit', (data) => {
+      this.sessionProviders.delete(data.sessionId);
+      this.emit('exit', data);
+    });
+    this.geminiManager.on('error', (data) => this.emit('error', data));
+    this.geminiManager.on('spawned', (data) => this.emit('spawned', data));
+
     this.setMaxListeners(100); // Increase listener limit
   }
 
@@ -77,6 +88,9 @@ export class AgentHostManager extends EventEmitter implements LLMProvider {
     if (providerType === 'ollama') {
       return this.ollamaManager;
     }
+    if (providerType === 'gemini') {
+      return this.geminiManager;
+    }
     return this.claudeManager;
   }
 
@@ -86,9 +100,10 @@ export class AgentHostManager extends EventEmitter implements LLMProvider {
 
     if (provider === this.ollamaManager) {
       // OllamaManager's generateResponse is its "start"
-      // It doesn't use worktreePath or permissionMode in the same way Claude CLI does.
-      // We might need to adjust how these are handled or passed.
       return this.ollamaManager.generateResponse(sessionId, prompt, agentId);
+    } else if (provider === this.geminiManager) {
+      // GeminiManager's generateResponse is also its "start"
+      return this.geminiManager.generateResponse(sessionId, prompt, agentId);
     } else {
       // ClaudeCodeManager needs permissionMode
       return this.claudeManager.startSession(sessionId, worktreePath, prompt, permissionMode);
@@ -110,11 +125,11 @@ export class AgentHostManager extends EventEmitter implements LLMProvider {
     if (provider === this.ollamaManager) {
       // OllamaManager's generateResponse can take conversationHistory
       return this.ollamaManager.generateResponse(sessionId, prompt, agentId, conversationHistory);
+    } else if (provider === this.geminiManager) {
+      // GeminiManager's generateResponse can also take conversationHistory
+      return this.geminiManager.generateResponse(sessionId, prompt, agentId, conversationHistory);
     } else {
       // ClaudeCodeManager's continueSession implies using its internal history management via --continue
-      // The `conversationHistory` param might be redundant here if Claude manages it internally.
-      // The current ClaudeCodeManager `continueSession` takes `conversationHistory` but it's not directly used with `--continue` flag.
-      // For now, we pass it along.
       return this.claudeManager.continueSession(sessionId, worktreePath, prompt, conversationHistory);
     }
   }
@@ -136,10 +151,9 @@ export class AgentHostManager extends EventEmitter implements LLMProvider {
     const provider = this.sessionProviders.get(sessionId);
     if (provider === this.claudeManager && provider.sendInput) {
       provider.sendInput(sessionId, input);
-    } else if (provider === this.ollamaManager) {
-      this.logger?.warn(`[AgentHostManager] sendInput called for Ollama session ${sessionId}, which is not supported. Input: ${input}`);
-      // Ollama doesn't have an interactive input stream like Claude CLI's PTY
-      // This might need a different UX/flow for Ollama.
+    } else if (provider === this.ollamaManager || provider === this.geminiManager) {
+      this.logger?.warn(`[AgentHostManager] sendInput called for API-based session ${sessionId}, which is not supported. Input: ${input}`);
+      // API-based providers (Ollama, Gemini) don't have an interactive PTY input stream.
     } else {
          this.logger?.warn(`[AgentHostManager] sendInput called for ${sessionId} but no active or compatible provider found.`);
     }
@@ -170,8 +184,8 @@ export class AgentHostManager extends EventEmitter implements LLMProvider {
     await this.claudeManager.killAllProcesses();
     this.logger?.info('[AgentHostManager] Claude processes killed.');
 
-    // Ollama specific cleanup (if any needed in the future, e.g., aborting active requests)
-    // For now, OllamaManager's stopSession is per-session and there's no global "process" to kill.
+    // Ollama/Gemini specific cleanup (if any needed in the future, e.g., aborting active requests)
+    // For now, their stopSession is per-session and there's no global "process" to kill.
     // We could iterate over this.sessionProviders and call stopSession if truly needed,
     // but sessionManager.cleanup should handle that for active sessions.
     // killAllProcesses for Claude is more about any lingering CLI instances.

@@ -7,8 +7,12 @@ export interface OllamaConfig {
   defaultModel?: string;
 }
 
+export interface GeminiConfig {
+  defaultModel?: string;
+}
+
 export interface AgentConfig {
-  provider?: 'claude' | 'ollama';
+  provider?: 'claude' | 'ollama' | 'gemini';
   model?: string;
 }
 
@@ -16,11 +20,13 @@ export interface AppConfig {
   gitRepoPath: string;
   verbose?: boolean;
   anthropicApiKey?: string;
+  geminiApiKey?: string;
   systemPromptAppend?: string;
   runScript?: string[];
   claudeConfig?: ClaudeConfig;
   ollamaConfig?: OllamaConfig;
-  defaultProvider?: 'claude' | 'ollama';
+  geminiConfig?: GeminiConfig;
+  defaultProvider?: 'claude' | 'ollama' | 'gemini';
   agents?: Record<string, AgentConfig>;
   defaultPermissionMode?: 'approve' | 'ignore';
   autoCheckUpdates?: boolean;
