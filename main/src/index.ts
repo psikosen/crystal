@@ -19,7 +19,8 @@ import { registerIpcHandlers } from './ipc';
 import { setupAutoUpdater } from './autoUpdater';
 import { setupEventListeners } from './events';
 import { AppServices } from './ipc/types';
-import { ClaudeCodeManager } from './services/claudeCodeManager';
+// import { ClaudeCodeManager } from './services/claudeCodeManager'; // Replaced by AgentHostManager
+import { AgentHostManager } from './services/agentHostManager';
 
 let mainWindow: BrowserWindow | null = null;
 let taskQueue: TaskQueue | null = null;
@@ -29,7 +30,8 @@ let configManager: ConfigManager;
 let logger: Logger;
 let sessionManager: SessionManager;
 let worktreeManager: WorktreeManager;
-let claudeCodeManager: ClaudeCodeManager;
+// let claudeCodeManager: ClaudeCodeManager; // Replaced by agentHostManager
+let agentHostManager: AgentHostManager;
 let gitDiffManager: GitDiffManager;
 let executionTracker: ExecutionTracker;
 let worktreeNameGenerator: WorktreeNameGenerator;
@@ -340,7 +342,8 @@ async function initializeServices() {
     await worktreeManager.initializeProject(activeProject.path);
   }
 
-  claudeCodeManager = new ClaudeCodeManager(sessionManager, logger, configManager, permissionIpcPath);
+  // claudeCodeManager = new ClaudeCodeManager(sessionManager, logger, configManager, permissionIpcPath); // Replaced
+  agentHostManager = new AgentHostManager(configManager, sessionManager, logger, permissionIpcPath);
   gitDiffManager = new GitDiffManager();
   executionTracker = new ExecutionTracker(sessionManager, gitDiffManager);
   worktreeNameGenerator = new WorktreeNameGenerator(configManager);
@@ -354,7 +357,7 @@ async function initializeServices() {
   taskQueue = new TaskQueue({
     sessionManager,
     worktreeManager,
-    claudeCodeManager,
+    claudeCodeManager: agentHostManager, // Use agentHostManager here
     gitDiffManager,
     executionTracker,
     worktreeNameGenerator,
@@ -367,7 +370,7 @@ async function initializeServices() {
     databaseService,
     sessionManager,
     worktreeManager,
-    claudeCodeManager,
+    agentHostManager: agentHostManager, // Renamed key
     gitDiffManager,
     executionTracker,
     worktreeNameGenerator,
@@ -385,6 +388,13 @@ async function initializeServices() {
   
   // Start periodic version checking (only if enabled in settings)
   versionChecker.startPeriodicCheck();
+
+  // Listen for config updates to notify AgentHostManager
+  configManager.on('config-updated', () => {
+    if (agentHostManager) {
+      agentHostManager.handleConfigUpdate();
+    }
+  });
 }
 
 app.whenReady().then(async () => {
@@ -432,11 +442,11 @@ app.on('before-quit', async () => {
     console.log('[Main] Run commands stopped');
   }
 
-  // Kill all Claude processes
-  if (claudeCodeManager) {
-    console.log('[Main] Killing all Claude processes...');
-    await claudeCodeManager.killAllProcesses();
-    console.log('[Main] Claude processes killed');
+  // Shutdown AgentHostManager (which internally handles Claude's killAllProcesses)
+  if (agentHostManager) {
+    console.log('[Main] Shutting down AgentHostManager and its providers...');
+    await agentHostManager.shutdown();
+    console.log('[Main] AgentHostManager shut down.');
   }
 
   // Close task queue

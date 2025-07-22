@@ -3,7 +3,8 @@ import { SimpleQueue } from './simpleTaskQueue';
 import type { SessionManager } from './sessionManager';
 import type { WorktreeManager } from './worktreeManager';
 import { WorktreeNameGenerator } from './worktreeNameGenerator';
-import type { ClaudeCodeManager } from './claudeCodeManager';
+// import type { ClaudeCodeManager } from './claudeCodeManager'; // Replaced by AgentHostManager
+import type { AgentHostManager } from './agentHostManager'; // Import AgentHostManager
 import type { GitDiffManager } from './gitDiffManager';
 import type { ExecutionTracker } from './executionTracker';
 import { formatForDisplay } from '../utils/timestampUtils';
@@ -12,7 +13,7 @@ import * as os from 'os';
 interface TaskQueueOptions {
   sessionManager: SessionManager;
   worktreeManager: WorktreeManager;
-  claudeCodeManager: ClaudeCodeManager;
+  agentHostManager: AgentHostManager; // Renamed from claudeCodeManager
   gitDiffManager: GitDiffManager;
   executionTracker: ExecutionTracker;
   worktreeNameGenerator: WorktreeNameGenerator;
@@ -124,7 +125,7 @@ export class TaskQueue {
     
     this.sessionQueue.process(sessionConcurrency, async (job) => {
       const { prompt, worktreeTemplate, index, permissionMode, projectId, baseBranch, autoCommit } = job.data;
-      const { sessionManager, worktreeManager, claudeCodeManager } = this.options;
+      const { sessionManager, worktreeManager, agentHostManager } = this.options; // Renamed claudeCodeManager
 
       console.log(`[TaskQueue] Processing session creation job ${job.id}`, { prompt, worktreeTemplate, index, permissionMode, projectId, baseBranch });
 
@@ -231,9 +232,12 @@ export class TaskQueue {
           console.log(`[TaskQueue] Build script completed. Success: ${buildResult.success}`);
         }
 
-        console.log(`[TaskQueue] Starting Claude Code for session ${session.id} with permission mode: ${permissionMode}`);
-        await claudeCodeManager.startSession(session.id, session.worktreePath, prompt, permissionMode);
-        console.log(`[TaskQueue] Claude Code started successfully for session ${session.id}`);
+        console.log(`[TaskQueue] Starting Agent Host for session ${session.id} with permission mode: ${permissionMode}`);
+        // AgentHostManager's startSession might need agentId if we want to use agent-specific models from config
+        // For now, agentId is not passed from here, so it will use default provider or default Ollama model.
+        // We might need to pass targetProject.id or similar as agentId if projects are agents.
+        await agentHostManager.startSession(session.id, session.worktreePath, prompt, String(targetProject.id) /* agentId */, permissionMode);
+        console.log(`[TaskQueue] Agent Host started successfully for session ${session.id}`);
 
         return { sessionId: session.id };
       } catch (error) {
@@ -244,22 +248,25 @@ export class TaskQueue {
 
     this.inputQueue.process(10, async (job) => {
       const { sessionId, input } = job.data;
-      const { claudeCodeManager } = this.options;
+      const { agentHostManager } = this.options; // Renamed claudeCodeManager
       
-      await claudeCodeManager.sendInput(sessionId, input);
+      agentHostManager.sendInput(sessionId, input); // sendInput is not async in AgentHostManager
     });
 
     this.continueQueue.process(10, async (job) => {
       const { sessionId, prompt } = job.data;
-      const { sessionManager, claudeCodeManager } = this.options;
+      const { sessionManager, agentHostManager } = this.options; // Renamed claudeCodeManager
       
       const session = await sessionManager.getSession(sessionId);
       if (!session) {
         throw new Error(`Session ${sessionId} not found`);
       }
+      const dbSession = sessionManager.getDbSession(sessionId);
+
 
       const messages = await sessionManager.getConversationMessages(sessionId);
-      await claudeCodeManager.continueSession(sessionId, session.worktreePath, prompt, messages);
+      // Pass agentId to continueSession as well
+      await agentHostManager.continueSession(sessionId, session.worktreePath, prompt, messages, dbSession?.project_id ? String(dbSession.project_id) : undefined /* agentId */);
     });
   }
 
